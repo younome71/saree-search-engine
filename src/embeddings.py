@@ -1,92 +1,179 @@
-from pathlib import Path
-
-import numpy as np
 import torch
+import numpy as np
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
+import open_clip
 
 
-MODEL_NAME = "openai/clip-vit-base-patch32"
+MODEL_NAME = "hf-hub:Marqo/marqo-fashionCLIP"
 
 
 class ImageEmbedder:
 
     def __init__(self):
-        print(f"Loading model: {MODEL_NAME}")
 
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
+        print(
+            f"Loading FashionCLIP model: {MODEL_NAME}"
         )
 
-        print(f"Using device: {self.device}")
-
-        self.processor = CLIPProcessor.from_pretrained(
-            MODEL_NAME
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
         )
 
-        self.model = CLIPModel.from_pretrained(
-            MODEL_NAME
+        print(
+            f"Device: {self.device}"
         )
 
-        self.model.to(self.device)
-        self.model.eval()
-
-    @torch.no_grad()
-    def encode_images(self, images):
-        """
-        Encode a batch of PIL images.
-
-        Returns:
-            numpy array of shape (batch_size, 512)
-        """
-
-        inputs = self.processor(
-            images=images,
-            return_tensors="pt"
+        # Official OpenCLIP loading method
+        self.model, _, self.preprocess = (
+            open_clip.create_model_and_transforms(
+                MODEL_NAME
+            )
         )
 
-        pixel_values = inputs["pixel_values"].to(
+        self.model = self.model.to(
             self.device
         )
 
-        vision_outputs = self.model.vision_model(
-            pixel_values=pixel_values
+        self.model.eval()
+
+        print(
+            "FashionCLIP loaded successfully."
         )
-
-        pooled_output = vision_outputs.pooler_output
-
-        image_features = self.model.visual_projection(
-            pooled_output
-        )
-
-        # Normalize for cosine similarity
-        image_features = image_features / image_features.norm(
-            dim=-1,
-            keepdim=True
-        )
-
-        return image_features.cpu().numpy()
 
     def encode_image(self, image):
-        return self.encode_images([image])[0]
 
-    def encode_file(self, image_path):
-        image = Image.open(image_path).convert("RGB")
-        return self.encode_image(image)
+        if not isinstance(
+            image,
+            Image.Image
+        ):
+            image = Image.open(image)
+
+        image = image.convert("RGB")
+
+        image_tensor = self.preprocess(
+            image
+        ).unsqueeze(0)
+
+        image_tensor = image_tensor.to(
+            self.device
+        )
+
+        with torch.no_grad():
+
+            features = self.model.encode_image(
+                image_tensor,
+                normalize=True
+            )
+
+        embedding = (
+            features
+            .cpu()
+            .numpy()[0]
+        )
+
+        return embedding.astype(
+            "float32"
+        )
+
+    def encode_images(
+        self,
+        images,
+        batch_size=16
+    ):
+
+        all_embeddings = []
+
+        for start in range(
+            0,
+            len(images),
+            batch_size
+        ):
+
+            batch = images[
+                start:start + batch_size
+            ]
+
+            image_tensors = []
+
+            for image in batch:
+
+                if isinstance(
+                    image,
+                    Image.Image
+                ):
+                    pil_image = image
+                else:
+                    pil_image = Image.open(
+                        image
+                    )
+
+                pil_image = pil_image.convert(
+                    "RGB"
+                )
+
+                image_tensors.append(
+                    self.preprocess(
+                        pil_image
+                    )
+                )
+
+            image_tensor = torch.stack(
+                image_tensors
+            ).to(self.device)
+
+            with torch.no_grad():
+
+                features = (
+                    self.model.encode_image(
+                        image_tensor,
+                        normalize=True
+                    )
+                )
+
+            all_embeddings.append(
+                features
+                .cpu()
+                .numpy()
+            )
+
+        return np.vstack(
+            all_embeddings
+        ).astype("float32")
 
 
 if __name__ == "__main__":
 
-    test_image = Path(
-        "data/images/000001.webp"
-    )
-
     embedder = ImageEmbedder()
 
-    embedding = embedder.encode_file(
+    test_image = Image.open(
+        "data/images/000001.webp"
+    ).convert("RGB")
+
+    embedding = embedder.encode_image(
         test_image
     )
 
-    print("\nEmbedding generated!")
-    print("Shape:", embedding.shape)
-    print("Norm:", np.linalg.norm(embedding))
+    print()
+    print("=" * 60)
+    print("FASHIONCLIP EMBEDDING TEST")
+    print("=" * 60)
+
+    print(
+        f"Shape : {embedding.shape}"
+    )
+
+    print(
+        f"Dtype : {embedding.dtype}"
+    )
+
+    print(
+        f"Norm  : "
+        f"{np.linalg.norm(embedding):.6f}"
+    )
+
+    print(
+        f"First 10 values: "
+        f"{embedding[:10]}"
+    )
