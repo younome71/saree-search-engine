@@ -26,3 +26,5 @@ evaluation/query_*.png
 
 # Logs
 *.log
+
+*.png
