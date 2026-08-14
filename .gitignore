@@ -17,9 +17,6 @@ Thumbs.db
 .env
 *.env
 
-# Large/generated files
-index/*.faiss
-index/*.npy
 
 # Evaluation generated images
 evaluation/query_*.png
